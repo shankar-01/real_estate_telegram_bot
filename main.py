@@ -55,8 +55,8 @@ def get_rendered_html(url, config):
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("--disable-gpu")
-    tempdir = tempfile.mkdtemp()
-    chrome_options.add_argument(f"--user-data-dir={tempdir}")
+    #tempdir = tempfile.mkdtemp()
+    #chrome_options.add_argument(f"--user-data-dir={tempdir}")
     driver = None
     try:
         driver = webdriver.Chrome(options=chrome_options)
@@ -96,7 +96,6 @@ def get_rendered_html(url, config):
     finally:
         if driver:
             driver.quit()
-        os.rmdir(tempdir)
 
 # ============================================================
 # 🧩 Property Parser
@@ -247,7 +246,7 @@ def parse_list_page(base_url, config):
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
-
+    
     driver = webdriver.Chrome(options=chrome_options)
     driver.get(base_url)
     time.sleep(3)
