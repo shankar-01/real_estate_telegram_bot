@@ -93,9 +93,6 @@ def get_rendered_html(url, config):
         if driver:
             driver.quit()
         return None
-    finally:
-        if driver:
-            driver.quit()
 
 # ============================================================
 # 🧩 Property Parser
