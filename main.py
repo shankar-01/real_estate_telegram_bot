@@ -21,6 +21,8 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from db_driver import ConfigDBDriver
 from send_email import send_email_notification
+import undetected_chromedriver as uc
+from selenium_stealth import stealth
 # Load env
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -49,25 +51,48 @@ def get_website_config(url):
 # 🌐 Selenium Loader
 # ============================================================
 def get_rendered_html(url, config):
-    chrome_options = Options()
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.binary_location = "/usr/bin/chromium-browser"
-    #tempdir = tempfile.mkdtemp()
-    #chrome_options.add_argument(f"--user-data-dir={tempdir}")
+    headless = config.get("headless", True)
+
+    options = uc.ChromeOptions()
+    if headless:
+        options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+
+    # Set realistic User-Agent
+    ua = config.get(
+        "user_agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+    )
+    options.add_argument(f"--user-agent={ua}")
+
+    # Optional: unique profile per run to avoid session conflicts
+    tempdir = tempfile.mkdtemp()
+    options.add_argument(f"--user-data-dir={tempdir}")
+
     driver = None
     try:
-        driver = webdriver.Chrome(options=chrome_options)
-        driver.get(url)
+        driver = uc.Chrome(options=options)
+
+        # Apply selenium-stealth tweaks
+        stealth(driver,
+                languages=["en-US", "en"],
+                vendor="Google Inc.",
+                platform="Win32",
+                webgl_vendor="Intel Inc.",
+                renderer="Intel Iris OpenGL Engine",
+                fix_hairline=True,
+                )
 
         wait_time = config.get("wait_time", 6)
         lazy_scroll = config.get("lazy_scroll", False)
         max_scrolls = config.get("max_scrolls", 10)
         scroll_pause = config.get("scroll_pause", 2)
         page_ready_xpath = config.get("page_ready_xpath", "//*")
+
+        driver.get(url)
 
         try:
             WebDriverWait(driver, wait_time).until(
@@ -89,12 +114,12 @@ def get_rendered_html(url, config):
         html_content = driver.page_source
         driver.quit()
         return html_content
+
     except WebDriverException as e:
         print(f"⚠️ Selenium Error: {e}")
         if driver:
             driver.quit()
         return None
-
 # ============================================================
 # 🧩 Property Parser
 # ============================================================
@@ -237,23 +262,43 @@ def parse_list_page(base_url, config):
     seen_first = None
     page = 1
     page_query = config.get("page_query")
-    next_button_xpath = config.get("next_page_xpath")  # ✅ NEW
+    next_button_xpath = config.get("next_page_xpath")
 
-    chrome_options = Options()
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.binary_location = "/usr/bin/chromium-browser"
-    
-    driver = webdriver.Chrome(options=chrome_options)
+    headless = config.get("headless", True)
+
+    options = uc.ChromeOptions()
+    if headless:
+        options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    ua = config.get(
+        "user_agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+    )
+    options.add_argument(f"--user-agent={ua}")
+    tempdir = tempfile.mkdtemp()
+    options.add_argument(f"--user-data-dir={tempdir}")
+
+    driver = uc.Chrome(options=options)
+
+    # Apply stealth
+    stealth(driver,
+            languages=["en-US", "en"],
+            vendor="Google Inc.",
+            platform="Win32",
+            webgl_vendor="Intel Inc.",
+            renderer="Intel Iris OpenGL Engine",
+            fix_hairline=True,
+            )
+
     driver.get(base_url)
     time.sleep(3)
 
     while True:
         print(f"\n🔄 Loading page {page}...")
 
-        # Extract property links
         html_content = driver.page_source
         tree = html.fromstring(html_content)
         property_links = tree.xpath(config.get("list_page_check", ""))
@@ -262,7 +307,6 @@ def parse_list_page(base_url, config):
             print("🚫 No property links found → stopping pagination.")
             break
 
-        # Avoid infinite loop
         first_url = urljoin(base_url, property_links[0])
         if seen_first == first_url:
             print("🛑 Same first record as previous → last page reached.")
@@ -278,8 +322,7 @@ def parse_list_page(base_url, config):
             else:
                 print(f"❌ Error parsing property: {error}")
 
-        # Check for next page
-        # Check for next page
+        # Pagination
         if next_button_xpath:
             try:
                 next_btn = WebDriverWait(driver, 5).until(
@@ -287,7 +330,6 @@ def parse_list_page(base_url, config):
                 )
                 driver.execute_script("arguments[0].scrollIntoView(true);", next_btn)
                 time.sleep(1)
-                # 💥 Use JS click to avoid interception errors
                 driver.execute_script("arguments[0].click();", next_btn)
                 print("👉 Clicked next page button via JS.")
                 time.sleep(config.get("scroll_pause", 2))
@@ -296,9 +338,7 @@ def parse_list_page(base_url, config):
             except Exception as e:
                 print(f"🛑 No next page button found or not clickable: {e}")
                 break
-
         elif page_query:
-            # Fallback to query pagination if defined
             parts = list(urlsplit(base_url))
             query = parse_qs(parts[3])
             query[page_query] = [str(page + 1)]
@@ -314,8 +354,6 @@ def parse_list_page(base_url, config):
 
     driver.quit()
     return properties
-
-
 # ============================================================
 # 🤖 Telegram Bot Handlers
 # ============================================================
