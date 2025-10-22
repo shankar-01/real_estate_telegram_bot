@@ -1,6 +1,7 @@
 import os
 import re
 import uuid
+import tempfile
 import time
 import json
 import openpyxl
@@ -54,7 +55,8 @@ def get_rendered_html(url, config):
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("--disable-gpu")
-
+    tempdir = tempfile.mkdtemp()
+    chrome_options.add_argument(f"--user-data-dir={tempdir}")
     driver = None
     try:
         driver = webdriver.Chrome(options=chrome_options)
@@ -91,7 +93,10 @@ def get_rendered_html(url, config):
         if driver:
             driver.quit()
         return None
-
+    finally:
+        if driver:
+            driver.quit()
+        os.rmdir(tempdir)
 
 # ============================================================
 # 🧩 Property Parser
