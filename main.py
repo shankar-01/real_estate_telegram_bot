@@ -390,7 +390,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"✅ Готово: {len(properties)} объекта {error_count} с ошибками. Скачать Excel: \n📂 {BASE_URL}/output_files/{filename}"
     )
-    send_email_notification("🚀 Bot Notification", f"✅ Готово: {len(properties)} объекта {error_count} с ошибками. Скачать Excel: \n📂 {BASE_URL}/output_file/{filename}")
+    send_email_notification("🚀 Bot Notification", f"✅ Готово: {len(properties)} объекта {error_count} с ошибками. Скачать Excel: \n📂 {BASE_URL}/output_files/{filename}")
 
 
 # ============================================================
