@@ -125,7 +125,7 @@ def delete(id):
 # Serve 'output' folder
 @app.route("/output_files/<path:filename>")
 def serve_output(filename):
-    return send_from_directory("output", filename)
+    return send_from_directory("output_files", filename)
 
 # Serve 'images' folder
 @app.route("/images/<path:filename>")

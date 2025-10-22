@@ -388,7 +388,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     df = pd.read_excel(file_path, engine="openpyxl")
     error_count = df.apply(lambda x: x.astype(str).str.contains("error", case=False, na=False)).sum().sum()
     await update.message.reply_text(
-        f"✅ Готово: {len(properties)} объекта {error_count} с ошибками. Скачать Excel: \n📂 {BASE_URL}/output_file/{filename}"
+        f"✅ Готово: {len(properties)} объекта {error_count} с ошибками. Скачать Excel: \n📂 {BASE_URL}/output_files/{filename}"
     )
     send_email_notification("🚀 Bot Notification", f"✅ Готово: {len(properties)} объекта {error_count} с ошибками. Скачать Excel: \n📂 {BASE_URL}/output_file/{filename}")
 
