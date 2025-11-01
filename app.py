@@ -132,6 +132,9 @@ def serve_output(filename):
 def serve_images(filename):
     return send_from_directory("images", filename)
 
+@app.route("/download/<path:filename>")
+def download_file(filename):
+    return send_from_directory("images", filename, as_attachment=True)
 @app.route("/image_pages")
 def image_pages():
     images = os.listdir("images")
