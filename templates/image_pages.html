@@ -46,13 +46,7 @@
     {% endif %}
   {% endwith %}
 
-  <!-- Upload Form -->
-  <form action="{{ url_for('upload_image') }}" method="POST" enctype="multipart/form-data" class="mb-4">
-    <div class="input-group">
-      <input type="file" name="image" accept="image/*" class="form-control" required>
-      <button class="btn btn-primary" type="submit">Upload</button>
-    </div>
-  </form>
+  
 
   <!-- Image Grid -->
   <div class="row">
