@@ -134,7 +134,7 @@ def serve_images(filename):
 
 @app.route("/image_pages")
 def image_pages():
-    images = os.listdir(UPLOAD_FOLDER)
+    images = os.listdir("images")
     return render_template("image_pages.html", images=images)
 
 # ================= Logout =================
