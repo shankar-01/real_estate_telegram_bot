@@ -129,7 +129,16 @@ def get_rendered_html(url, config):
 def parse_property_with_config(url, config, download_folder="images"):
     result = {"Ссылка на объект": url}
     os.makedirs(download_folder, exist_ok=True)
-
+    # 🧹 Clean up previous images before starting a new download
+    try:
+        for f in os.listdir(download_folder):
+            file_path = os.path.join(download_folder, f)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+        print(f"🧹 Old images removed from '{download_folder}'")
+    except Exception as e:
+        print(f"⚠️ Failed to clear images folder: {e}")
+        
     try:
         html_content = get_rendered_html(url, config)
         if not html_content:
