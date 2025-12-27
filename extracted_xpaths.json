@@ -1,0 +1,87 @@
+{
+  "fields": {
+    "Название": {
+      "xpath": "normalize-space(//div[contains(@class, 'je2-listing-info')]/h1)",
+      "transform": "re.sub(r'\\s+', ' ', _v).strip()"
+    },
+    "Цена": {
+      "xpath": "string(//div[contains(@class, 'je2-listing-info__price')]/span)",
+      "transform": "re.sub(r'\\s+', ' ', _v).strip()"
+    },
+    "Валюта": {
+      "xpath": "//div[contains(@class, 'je2-listing-info__price')]/span/text()",
+      "transform": "re.search(r'[€$£₽¥]', _v) and re.search(r'[€$£₽¥]', _v).group().strip() if re.search(r'[€$£₽¥]', _v) else None"
+    },
+    "Площадь": {
+      "xpath": "//ul[contains(@class, 'je2-listing-info__specs')]/li[contains(text(), 'Sqm') or contains(text(), 'sqm') or contains(text(), 'm²')]",
+      "transform": "re.sub(r'[^\\d\\.,]', '', _v.replace(',', '.')).strip()"
+    },
+    "Площадь земли": {
+      "xpath": "//ul[contains(@class, 'je2-listing-info__specs')]/li[contains(text(), 'lot')]",
+      "transform": "re.sub(r'[^\\d\\.,]', '', _v.replace(',', '.')).strip()"
+    },
+    "Тип объекта": {
+      "xpath": "//div[contains(@class, 'je2-listing-about-building')]//li[.//h3[contains(., 'Property type')]]/p/text()",
+      "transform": "re.sub(r'\\s+', ' ', _v).strip()"
+    },
+    "Год постройки": {
+      "xpath": "//div[contains(@class, 'je2-listing-about-building')]//li[.//h3[contains(., 'Year built')]]/p/text()",
+      "transform": "re.sub(r'\\s+', ' ', _v).strip()"
+    },
+    "Количество комнат": {
+      "xpath": "//ul[contains(@class, 'je2-listing-info__specs')]/li[contains(text(), 'Beds')]/text()",
+      "transform": "re.sub(r'[^\\d]', '', _v).strip()"
+    },
+    "Описание": {
+      "xpath": "//div[contains(@class, 'je2-listing-about-property')]//div[contains(@class, 'je2-read-more__content') and contains(@class, '_original')]",
+      "transform": "re.sub(r'\\s+', ' ', re.sub(r'<[^>]+>', '', _v)).strip()"
+    },
+    "Инфраструктура": {
+      "xpath": "//div[contains(@class, 'je2-listing-features__features-top-9')]//li/span/text()",
+      "transform": null
+    },
+    "С/у": {
+      "xpath": "//ul[contains(@class, 'je2-listing-info__specs')]/li[contains(text(), 'Baths')]/text()",
+      "transform": "re.sub(r'[^\\d]', '', _v).strip()"
+    },
+    "Этаж": {
+      "xpath": "//div[contains(@class, 'je2-listing-about-building')]//li[.//h3[contains(., 'Floors')]]/p/text()",
+      "transform": "re.sub(r'\\s+', ' ', _v).strip()"
+    },
+    "Локация": {
+      "xpath": "//button[contains(@class, 'je2-listing-info__location')]/span/text()",
+      "transform": "re.sub(r'\\s+', ' ', _v).strip()"
+    },
+    "Координаты": {
+      "xpath": "//div[contains(@class, 'je2-map__single-marker')][@data-lat and @data-lng]",
+      "transform": "{'lat': _e.get('data-lat'), 'lng': _e.get('data-lng')}"
+    },
+    "Фото_ссылки": {
+      "xpath": "//div[contains(@class, 'je2-top-gallery__image')]//img/@src | //div[contains(@class, 'je2-top-gallery__side-images')]//img/@src",
+      "transform": null
+    },
+    "Фото_уникальные_названия": {
+      "xpath": "//div[contains(@class, 'je2-top-gallery__image')]//img/@alt | //div[contains(@class, 'je2-top-gallery__side-images')]//img/@alt",
+      "transform": null
+    },
+    "Контактное лицо": {
+      "xpath": "//div[contains(@class,'je3-listing-contact-card__agent-or-office-info__name')]/text()",
+      "transform": "re.sub(r'\\s+', ' ', _v).strip()"
+    },
+    "Телефон контактного лица": {
+      "xpath": null,
+      "transform": null
+    },
+    "Компания": {
+      "xpath": "//div[contains(@class,'je2-listed-by-info__office-info__name')]/text()",
+      "transform": "re.sub(r'\\s+', ' ', _v).strip()"
+    },
+    "Телефон компании": {
+      "xpath": null,
+      "transform": null
+    }
+  },
+  "list_page_check": "//article[contains(@class,'ListingCard')]",
+  "page_query": "angouleme-france/luxury-family-estate-with-heated-pool-and-outbuildings-in-vars-near-angouleme-16460690",
+  "next_page_xpath": "//a[@class and contains(.,'Next')]/@href"
+}

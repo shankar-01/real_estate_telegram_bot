@@ -7,15 +7,15 @@
 </head>
 <body>
 <div class="container mt-5">
-  <h2>{{ 'Edit' if config[0] else 'Add' }} Config</h2>
+  <h2>{{ 'Edit' if config.website else 'Add' }} Config</h2>
   <form method="POST">
     <div class="mb-3">
       <label>Website</label>
-      <input class="form-control" name="website" value="{{ config[0] if config[0] else '' }}" required>
+      <input class="form-control" name="website" value="{{ config.website or '' }}" required>
     </div>
     <div class="mb-3">
       <label>Fields JSON (xpath & transform)</label>
-      <textarea class="form-control" name="config_json" rows="10" required>{{ config[1] if config[1] else '{}' }}</textarea>
+      <textarea class="form-control" name="config_json" rows="10" required>{{ config.config_json or '{}' }}</textarea>
     </div>
     <button class="btn btn-primary">Save</button>
     <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Cancel</a>
