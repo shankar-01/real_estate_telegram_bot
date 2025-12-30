@@ -3,3 +3,4 @@ venv/
 output_files/
 images/
 .env
+website_configs.db
