@@ -26,7 +26,7 @@ from selenium_stealth import stealth
 # Load env
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-BASE_URL = os.getenv("BASE_URL", "http://localhost")
+BASE_URL = "http://86.104.73.3/" #os.getenv("BASE_URL", "http://localhost")
 
 OUTPUT_FOLDER = "output_files"
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
