@@ -44,7 +44,7 @@ XPath rules (MANDATORY):
 
 Text cleaning rules (MANDATORY):
 - All single-text fields MUST use a transform that normalizes whitespace:
-  re.sub(r'\\s+', ' ', _v).strip()
+  re.sub(r'\\s+', ' ', value).strip()
 - Do NOT attempt to clean whitespace using XPath only.
 
 Inputs:
