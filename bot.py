@@ -14,18 +14,19 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, Con
 import undetected_chromedriver as uc
 from selenium_stealth import stealth
 
-from openai import OpenAI
 
 load_dotenv()
 
+# --- CONFIGURATION FROM ENV ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-OPENAI_API_KEY = os.getenv("CHAT_GPT_API_KEY")
-BASE_URL = "http://86.104.73.3/" #os.getenv("BASE_URL", "")
+CHAT_GPT_API_KEY = os.getenv("CHAT_GPT_API_KEY")
+CHAT_GPT_URL = os.getenv("CHAT_GPT_URL")
+MODEL_NAME = os.getenv("CHAT_GPT_MODEL")
+BASE_URL = "http://86.104.73.3/" 
 
 OUTPUT_FOLDER = "output_files"
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-client = OpenAI(api_key=OPENAI_API_KEY)
 
 GPT_SCHEMA = {
     "Название": None,
@@ -47,21 +48,55 @@ GPT_SCHEMA = {
     "Компания": None
 }
 
-def gpt_extract_property(html_content, url):
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        temperature=0,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": "Extract real estate data from HTML. Return valid JSON only."},
-            {"role": "user", "content":
-                "Schema:\n" + json.dumps(GPT_SCHEMA, ensure_ascii=False, indent=2) +
-                "\n\nURL: " + url +
-                "\n\nHTML:\n" + html_content[:120000]
-            }
-        ]
-    )
-    return json.loads(response.choices[0].message.content)
+def gpt_extract_property(html_content: str, url: str) -> dict:
+    truncated_html = html_content[:120000]
+
+    system_prompt = "You are an expert in web scraping and data extraction."
+
+    user_prompt = f"""
+Extract real estate data ONLY from the provided HTML.
+
+Rules:
+- Return RAW JSON only
+- No explanations
+- Missing fields must be null
+
+Schema:
+{json.dumps(GPT_SCHEMA, ensure_ascii=False, indent=2)}
+
+URL:
+{url}
+
+HTML:
+{truncated_html}
+"""
+
+    headers = {
+        "Authorization": f"Bearer {CHAT_GPT_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "model": MODEL_NAME,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "temperature": 0
+    }
+
+    response = requests.post(CHAT_GPT_URL, headers=headers, json=payload, timeout=120)
+
+    if response.status_code != 200:
+        raise Exception(f"LLM Error {response.status_code}: {response.text}")
+
+    data = response.json()
+    content = data["choices"][0]["message"]["content"]
+
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        raise ValueError(f"Invalid JSON returned by LLM:\n{content}")
 
 def get_rendered_html(url):
     options = uc.ChromeOptions()
@@ -73,12 +108,13 @@ def get_rendered_html(url):
     driver = uc.Chrome(options=options)  
     stealth(driver, languages=["en-US", "en"], vendor="Google Inc.", platform="Win32")  
 
-    driver.get(url)  
-    time.sleep(5)  
-    html_content = driver.page_source  
-    driver.quit()  
-    return html_content  
-
+    try:
+        driver.get(url)  
+        time.sleep(5)  
+        html_content = driver.page_source  
+        return html_content
+    finally:
+        driver.quit()  
 
 def parse_property(url, config):
     html_content = get_rendered_html(url)
@@ -104,15 +140,16 @@ def parse_property(url, config):
 
         text = ""  
         for v in values:  
-            if hasattr(v, "text_content"):  
-                text += v.text_content().strip() + " "  
-            else:  
-                text += str(v).strip() + " "  
+            if hasattr(v, "text_content"):
+                text += v.text_content().strip() + " "
+            else:
+                text += str(v).strip() + " "
 
         text = text.strip()  
 
         if transform:  
-            try:  
+            try:
+                # Use the transform rules from your prompt (normalizing whitespace)
                 text = eval(transform, {"re": re}, {"value": text})  
             except:  
                 text = "ERROR"  
@@ -120,13 +157,13 @@ def parse_property(url, config):
 
         result[field] = text if text else "ERROR"  
 
-    if error_count >= 5:  
+    # If static XPaths fail, fall back to LLM extraction
+    if error_count >= 2: # Lowered threshold to trigger LLM faster if XPaths are brittle
         gpt_data = gpt_extract_property(html_content, url)  
         gpt_data["Ссылка на объект"] = url  
         return gpt_data  
 
     return result  
-
 
 def save_to_excel(data):
     filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".xlsx"
@@ -134,44 +171,55 @@ def save_to_excel(data):
 
     df = pd.DataFrame(data)  
     df.to_excel(path, index=False)  
-
     return filename  
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Send property URL")
+    await update.message.reply_text("Send a property URL to start scraping.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
-    await update.message.reply_text("Processing...")
+    if not url.startswith("http"):
+        await update.message.reply_text("Please send a valid URL.")
+        return
 
+    await update.message.reply_text("🔍 Processing page with Undetected Chromedriver...")
+
+    # Default config used for initial extraction attempt
     config = {  
         "fields": {  
             "Название": {  
-                "xpath": "//h1",  
+                "xpath": "//h1/text() | //h1/span/text()",  
                 "transform": "re.sub(r'\\s+', ' ', value).strip()"  
             },  
             "Цена": {  
-                "xpath": "//span[contains(@class,'price')]",  
-                "transform": "re.sub(r'[^\\d.,]', '', value)"  
+                "xpath": "//div[contains(@class,'price')]//text()",  
+                "transform": "re.sub(r'[^\\d]', '', value)"  
             },  
             "Описание": {  
-                "xpath": "//div[contains(@class,'description')]",  
-                "transform": "value.strip()"  
+                "xpath": "//div[contains(@class,'description')]//text()",  
+                "transform": "re.sub(r'\\s+', ' ', value).strip()"  
             }  
         }  
     }  
 
-    property_data = parse_property(url, config)  
-    filename = save_to_excel([property_data])  
+    try:
+        property_data = parse_property(url, config)  
+        filename = save_to_excel([property_data])  
 
-    await update.message.reply_text(  
-        "Done\n" + BASE_URL + "/output_files/" + filename  
-    )  
+        await update.message.reply_text(  
+            f"✅ Done!\nDownload here: {BASE_URL}output_files/{filename}"  
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {str(e)}")
 
 
 if __name__ == "__main__":
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.run_polling()
+    if not BOT_TOKEN:
+        print("Error: BOT_TOKEN not found in environment variables.")
+    else:
+        app = ApplicationBuilder().token(BOT_TOKEN).build()
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        
+        print("Bot is running...")
+        app.run_polling()
