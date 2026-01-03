@@ -23,6 +23,7 @@ from db_driver import ConfigDBDriver
 from send_email import send_email_notification
 import undetected_chromedriver as uc
 from selenium_stealth import stealth
+from openpyxl import Workbook
 # Load env
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -265,7 +266,11 @@ def parse_property_with_config(url, config, download_folder="images"):
 # ============================================================
 # 💾 Excel Export (fixed column order in Russian)
 # ============================================================
-def save_to_excel(properties, filename):
+
+
+def save_to_excel(properties, filename, output_folder="output_files"):
+    os.makedirs(output_folder, exist_ok=True)
+
     # ✅ Desired column order (Russian)
     desired_order = [
         "Ссылка на объект", "Название", "Цена", "Валюта", "Площадь", "Площадь земли",
@@ -274,25 +279,41 @@ def save_to_excel(properties, filename):
         "Контактное лицо", "Телефон контактного лица", "Компания", "Телефон компании"
     ]
 
-    # Make sure every property has all columns
+    # Ensure all properties have all columns
     for prop in properties:
         for col in desired_order:
             if col not in prop:
                 prop[col] = "ERROR"
 
-    wb = openpyxl.Workbook()
+    wb = Workbook()
     ws = wb.active
     ws.append(desired_order)
+
     red_fill = PatternFill(start_color="FFFF0000", end_color="FFFF0000", fill_type="solid")
 
     for prop in properties:
-        row = [prop.get(col, "ERROR") for col in desired_order]
+        row = []
+        for col in desired_order:
+            value = prop.get(col, "ERROR")
+
+            # ✅ If value is a list, join it into a string
+            if isinstance(value, list):
+                value = ";".join([str(v) for v in value])
+
+            # ✅ If value is None, replace with empty string
+            if value is None:
+                value = ""
+
+            row.append(value)
+
         ws.append(row)
+
+        # Fill red for ERROR cells
         for i, value in enumerate(row, start=1):
             if value == "ERROR":
                 ws.cell(row=ws.max_row, column=i).fill = red_fill
 
-    file_path = os.path.join(OUTPUT_FOLDER, filename)
+    file_path = os.path.join(output_folder, filename)
     wb.save(file_path)
     return file_path
 
