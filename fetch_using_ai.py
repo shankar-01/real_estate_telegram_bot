@@ -18,7 +18,7 @@ if not CHAT_GPT_URL or not CHAT_GPT_API_KEY or not MODEL_NAME:
     raise RuntimeError("❌ Missing CHAT_GPT_* environment variables")
 
 # ============================================================
-# 🧠 SYSTEM PROMPT (STRICT)
+# 🧠 SYSTEM PROMPT
 # ============================================================
 SYSTEM_PROMPT = """
 You are a senior web scraping engineer.
@@ -37,14 +37,16 @@ STRICT RULES:
 - Pagination XPath MUST select ELEMENTS, not attributes.
 - page_query MUST be a query parameter name, NOT XPath.
 - If unsure, return null.
+- Make sure transform code is valid Python.
+- Use only built-in Python functions and standard libraries (re, etc.) and do not import anything or assign anything in transform.
 """
 
 # ============================================================
 # 🚫 INVALID TOKENS (hard block)
 # ============================================================
 INVALID_XPATH_TOKENS = [
-    "re.", "if ", "else", "lambda", ";",
-    "[", "]", "{", "}", " for ", " in "
+    "re.", " if ", " else", "lambda", ";",
+    "{", "}", " for ", " in "
 ]
 
 # ============================================================
@@ -56,12 +58,12 @@ def validate_xpath(xpath: str, field_name: str):
 
     for bad in INVALID_XPATH_TOKENS:
         if bad in xpath:
-            raise ValueError(f"❌ Invalid token '{bad}' in XPath for '{field_name}'")
+            raise ValueError(f"Invalid token '{bad}' in XPath for '{field_name}'")
 
     try:
         html.fromstring("<html></html>").xpath(xpath)
     except Exception as e:
-        raise ValueError(f"❌ Invalid XPath for '{field_name}': {xpath}") from e
+        raise ValueError(f"Invalid XPath for '{field_name}': {xpath}") from e
 
 
 def validate_config(cfg: dict):
@@ -73,52 +75,48 @@ def validate_config(cfg: dict):
 
     np = cfg.get("next_page_xpath")
     if np and "/@" in np:
-        raise ValueError("❌ next_page_xpath must select an ELEMENT, not @attribute")
+        raise ValueError("next_page_xpath must select an ELEMENT, not attribute")
 
     pq = cfg.get("page_query")
     if pq and ("/" in pq or "[" in pq):
-        raise ValueError("❌ page_query must be a query parameter name, not XPath")
+        raise ValueError("page_query must be a query parameter name")
 
     return cfg
 
+# ============================================================
+# 🤖 GPT CALL
+# ============================================================
+def call_gpt(messages):
+    headers = {
+        "Authorization": f"Bearer {CHAT_GPT_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "model": MODEL_NAME,
+        "messages": messages,
+        "temperature": 0
+    }
+
+    r = requests.post(CHAT_GPT_URL, json=payload, headers=headers, timeout=120)
+    if r.status_code != 200:
+        raise RuntimeError(r.text)
+
+    return r.json()["choices"][0]["message"]["content"]
 
 # ============================================================
-# 🤖 XPATH EXTRACTION
+# 🔁 AUTO-REPAIR XPATH GENERATOR
 # ============================================================
-def extract_xpaths(list_html: str, detail_html: str) -> dict:
-    user_prompt = f"""
-You will receive two HTML documents:
+def extract_xpaths(list_html: str, detail_html: str, max_retries: int = 3) -> dict:
+    base_prompt = f"""
+You will receive two HTML documents.
 
-1) list_page_html
-2) detail_page_html
+Generate a scraping configuration JSON.
 
-Your task:
-- Generate a scraping configuration JSON
-- Extract field XPaths ONLY from detail_page_html
-- Extract list_page_check, page_query, next_page_xpath ONLY from list_page_html
-
-MANDATORY RULES:
+Rules:
 - Output RAW JSON only
-- Do NOT explain anything
-- Do NOT add extra keys
-- Keep field names EXACTLY as provided
-- Use null when unsure
-
-XPath rules:
-- XPath MUST be valid XPath 1.0
-- XPath MUST NOT contain Python code
-- XPath selects data ONLY
-- Cleaning/regex/logic → transform ONLY
-- Single-value fields → XPath returns text
-- Multi-value fields → XPath returns node set
-- Pagination XPath selects ELEMENT, not attribute
-
-Transform rules:
-- Transform MUST be valid Python expression or null
-- Single-value text fields MUST normalize whitespace:
-  re.sub(r'\\s+', ' ', value).strip()
-
-Inputs:
+- No explanations
+- Follow XPath rules strictly
 
 list_page_html:
 {list_html[:120000]}
@@ -126,8 +124,7 @@ list_page_html:
 detail_page_html:
 {detail_html[:120000]}
 
-Output JSON TEMPLATE (fill only values):
-
+JSON TEMPLATE:
 {{
   "fields": {{
     "Название": {{ "xpath": null, "transform": null }},
@@ -157,34 +154,44 @@ Output JSON TEMPLATE (fill only values):
 }}
 """
 
-    headers = {
-        "Authorization": f"Bearer {CHAT_GPT_API_KEY}",
-        "Content-Type": "application/json"
-    }
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": base_prompt}
+    ]
 
-    payload = {
-        "model": MODEL_NAME,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt}
-        ],
-        "temperature": 0
-    }
+    last_error = None
 
-    r = requests.post(CHAT_GPT_URL, json=payload, headers=headers, timeout=120)
+    for attempt in range(1, max_retries + 1):
+        content = call_gpt(messages)
 
-    if r.status_code != 200:
-        raise RuntimeError(f"❌ LLM Error: {r.text}")
+        try:
+            cfg = json.loads(content)
+            return validate_config(cfg)
 
-    content = r.json()["choices"][0]["message"]["content"]
+        except Exception as e:
+            last_error = str(e)
 
-    try:
-        cfg = json.loads(content)
-    except json.JSONDecodeError:
-        raise ValueError(f"❌ Model returned invalid JSON:\n{content}")
+            # 🔁 FEEDBACK LOOP TO GPT
+            messages.append({
+                "role": "assistant",
+                "content": content
+            })
+            messages.append({
+                "role": "user",
+                "content": f"""
+The previous JSON is INVALID.
 
-    return validate_config(cfg)
-  
+ERROR:
+{last_error}
+
+Fix ONLY the invalid parts.
+Return FULL corrected JSON.
+RAW JSON ONLY.
+"""
+            })
+
+    raise RuntimeError(f"❌ Failed after {max_retries} attempts.\nLast error: {last_error}")
+
 if __name__ == "__main__":
     list_html = """
     
