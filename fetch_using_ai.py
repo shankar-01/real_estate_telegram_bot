@@ -1,86 +1,155 @@
-import requests
+import os
 import json
 import re
-import os
-import dotenv
-dotenv.load_dotenv()
+import requests
+from lxml import html
+from dotenv import load_dotenv
+
+# ============================================================
+# 🔐 ENV
+# ============================================================
+load_dotenv()
+
 CHAT_GPT_URL = os.getenv("CHAT_GPT_URL")
 CHAT_GPT_API_KEY = os.getenv("CHAT_GPT_API_KEY")
-MODEL_NAME = os.getenv("CHAT_GPT_MODEL")  # change to any installed model
+MODEL_NAME = os.getenv("CHAT_GPT_MODEL")
 
+if not CHAT_GPT_URL or not CHAT_GPT_API_KEY or not MODEL_NAME:
+    raise RuntimeError("❌ Missing CHAT_GPT_* environment variables")
+
+# ============================================================
+# 🧠 SYSTEM PROMPT (STRICT)
+# ============================================================
 SYSTEM_PROMPT = """
-You are an expert in web scraping and XPath extraction.
+You are a senior web scraping engineer.
+
+You generate ONLY valid XPath 1.0 expressions and Python transform strings.
+
+STRICT RULES:
+- XPath MUST be valid XPath 1.0 syntax.
+- XPath MUST NOT contain Python code.
+- NEVER use re.sub, re.search, if, else, lambda, list comprehensions in XPath.
+- XPath is ONLY for selecting nodes or text.
+- ALL regex, cleanup, logic MUST be in transform.
+- Single-value fields → XPath MUST return text (string() or /text()).
+- Multi-value fields → XPath MUST return node sets.
+- Attribute values MUST be selected using /@attr.
+- Pagination XPath MUST select ELEMENTS, not attributes.
+- page_query MUST be a query parameter name, NOT XPath.
+- If unsure, return null.
 """
 
+# ============================================================
+# 🚫 INVALID TOKENS (hard block)
+# ============================================================
+INVALID_XPATH_TOKENS = [
+    "re.", "if ", "else", "lambda", ";",
+    "[", "]", "{", "}", " for ", " in "
+]
 
+# ============================================================
+# 🧪 VALIDATION
+# ============================================================
+def validate_xpath(xpath: str, field_name: str):
+    if not isinstance(xpath, str):
+        raise ValueError(f"XPath for '{field_name}' must be a string")
+
+    for bad in INVALID_XPATH_TOKENS:
+        if bad in xpath:
+            raise ValueError(f"❌ Invalid token '{bad}' in XPath for '{field_name}'")
+
+    try:
+        html.fromstring("<html></html>").xpath(xpath)
+    except Exception as e:
+        raise ValueError(f"❌ Invalid XPath for '{field_name}': {xpath}") from e
+
+
+def validate_config(cfg: dict):
+    fields = cfg.get("fields", {})
+    for field, meta in fields.items():
+        xp = meta.get("xpath")
+        if xp:
+            validate_xpath(xp, field)
+
+    np = cfg.get("next_page_xpath")
+    if np and "/@" in np:
+        raise ValueError("❌ next_page_xpath must select an ELEMENT, not @attribute")
+
+    pq = cfg.get("page_query")
+    if pq and ("/" in pq or "[" in pq):
+        raise ValueError("❌ page_query must be a query parameter name, not XPath")
+
+    return cfg
+
+
+# ============================================================
+# 🤖 XPATH EXTRACTION
+# ============================================================
 def extract_xpaths(list_html: str, detail_html: str) -> dict:
-    """
-    Sends both HTML pages to Ollama and returns extracted XPath JSON.
-    """
-
     user_prompt = f"""
-You will receive two HTML pages:
+You will receive two HTML documents:
 
-- list_page_html
-- detail_page_html
+1) list_page_html
+2) detail_page_html
 
 Your task:
-- Extract XPaths for the detail page only, except where explicitly noted.
-- Fill ONLY the values in the provided JSON template.
-- Do NOT explain anything and do NOT add any extra text.
-- Keep all field names exactly as given.
-- Always use Python expression strings for transforms, or null if none.
-- Leave values as null if not found.
-- list_page_check, page_query, and next_page_xpath must be extracted from list_page_html.
-- list_page_check would return the list item links, which are used to route to detail pages.
+- Generate a scraping configuration JSON
+- Extract field XPaths ONLY from detail_page_html
+- Extract list_page_check, page_query, next_page_xpath ONLY from list_page_html
 
-XPath rules (MANDATORY):
-- For fields that return a SINGLE text value, the XPath MUST return text, not an element.
-  Use either `/text()` or `string(...)`.
-- Do NOT return element nodes for single-value fields.
-- For fields that return MULTIPLE values (lists, images, infrastructure), return node sets.
-- Attribute values must be selected explicitly using `/@attr`.
-- Coordinates must be extracted from attributes, not elements.
+MANDATORY RULES:
+- Output RAW JSON only
+- Do NOT explain anything
+- Do NOT add extra keys
+- Keep field names EXACTLY as provided
+- Use null when unsure
 
-Text cleaning rules (MANDATORY):
-- All single-text fields MUST use a transform that normalizes whitespace:
+XPath rules:
+- XPath MUST be valid XPath 1.0
+- XPath MUST NOT contain Python code
+- XPath selects data ONLY
+- Cleaning/regex/logic → transform ONLY
+- Single-value fields → XPath returns text
+- Multi-value fields → XPath returns node set
+- Pagination XPath selects ELEMENT, not attribute
+
+Transform rules:
+- Transform MUST be valid Python expression or null
+- Single-value text fields MUST normalize whitespace:
   re.sub(r'\\s+', ' ', value).strip()
-- Do NOT attempt to clean whitespace using XPath only.
 
 Inputs:
 
 list_page_html:
-{list_html}
+{list_html[:120000]}
 
 detail_page_html:
-{detail_html}
+{detail_html[:120000]}
 
-Output:
-Fill ONLY the following JSON template with correct XPaths and Python transform strings.
-Do NOT wrap the output in code blocks. Output RAW JSON only.
+Output JSON TEMPLATE (fill only values):
 
 {{
   "fields": {{
-    "Название": {{"xpath": null, "transform": null}},
-    "Цена": {{"xpath": null, "transform": null}},
-    "Валюта": {{"xpath": null, "transform": null}},
-    "Площадь": {{"xpath": null, "transform": null}},
-    "Площадь земли": {{"xpath": null, "transform": null}},
-    "Тип объекта": {{"xpath": null, "transform": null}},
-    "Год постройки": {{"xpath": null, "transform": null}},
-    "Количество комнат": {{"xpath": null, "transform": null}},
-    "Описание": {{"xpath": null, "transform": null}},
-    "Инфраструктура": {{"xpath": null, "transform": null}},
-    "С/у": {{"xpath": null, "transform": null}},
-    "Этаж": {{"xpath": null, "transform": null}},
-    "Локация": {{"xpath": null, "transform": null}},
-    "Координаты": {{"xpath": null, "transform": null}},
-    "Фото_ссылки": {{"xpath": null, "transform": null}},
-    "Фото_уникальные_названия": {{"xpath": null, "transform": null}},
-    "Контактное лицо": {{"xpath": null, "transform": null}},
-    "Телефон контактного лица": {{"xpath": null, "transform": null}},
-    "Компания": {{"xpath": null, "transform": null}},
-    "Телефон компании": {{"xpath": null, "transform": null}}
+    "Название": {{ "xpath": null, "transform": null }},
+    "Цена": {{ "xpath": null, "transform": null }},
+    "Валюта": {{ "xpath": null, "transform": null }},
+    "Площадь": {{ "xpath": null, "transform": null }},
+    "Площадь земли": {{ "xpath": null, "transform": null }},
+    "Тип объекта": {{ "xpath": null, "transform": null }},
+    "Год постройки": {{ "xpath": null, "transform": null }},
+    "Количество комнат": {{ "xpath": null, "transform": null }},
+    "Описание": {{ "xpath": null, "transform": null }},
+    "Инфраструктура": {{ "xpath": null, "transform": null }},
+    "С/у": {{ "xpath": null, "transform": null }},
+    "Этаж": {{ "xpath": null, "transform": null }},
+    "Локация": {{ "xpath": null, "transform": null }},
+    "Координаты": {{ "xpath": null, "transform": null }},
+    "Фото_ссылки": {{ "xpath": null, "transform": null }},
+    "Фото_уникальные_названия": {{ "xpath": null, "transform": null }},
+    "Контактное лицо": {{ "xpath": null, "transform": null }},
+    "Телефон контактного лица": {{ "xpath": null, "transform": null }},
+    "Компания": {{ "xpath": null, "transform": null }},
+    "Телефон компании": {{ "xpath": null, "transform": null }}
   }},
   "list_page_check": null,
   "page_query": null,
@@ -90,29 +159,32 @@ Do NOT wrap the output in code blocks. Output RAW JSON only.
 
     headers = {
         "Authorization": f"Bearer {CHAT_GPT_API_KEY}",
-        "Content-Type": "application/json",
+        "Content-Type": "application/json"
     }
+
     payload = {
         "model": MODEL_NAME,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt}
         ],
+        "temperature": 0
     }
 
-    response = requests.post(CHAT_GPT_URL, json=payload, headers=headers)
+    r = requests.post(CHAT_GPT_URL, json=payload, headers=headers, timeout=120)
 
-    if response.status_code != 200:
-      raise Exception(f"Error: {response.text}")
+    if r.status_code != 200:
+        raise RuntimeError(f"❌ LLM Error: {r.text}")
 
-    text = response.json()
-    content = text["choices"][0]["message"]["content"]
+    content = r.json()["choices"][0]["message"]["content"]
+
     try:
-      return json.loads(content)
-    except json.JSONDecodeError as e:
-      raise ValueError(f"Model returned invalid JSON:\n{content}") from e
+        cfg = json.loads(content)
+    except json.JSONDecodeError:
+        raise ValueError(f"❌ Model returned invalid JSON:\n{content}")
 
-
+    return validate_config(cfg)
+  
 if __name__ == "__main__":
     list_html = """
     
