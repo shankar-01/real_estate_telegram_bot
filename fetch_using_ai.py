@@ -39,6 +39,7 @@ STRICT RULES:
 - If unsure, return null.
 - Make sure transform code is valid Python.
 - Use only built-in Python functions and standard libraries (re, etc.) and do not import anything or assign anything in transform.
+- Make sure list_page_check XPath must return href attribute of an <a> element which points to the property detail page.
 """
 
 # ============================================================
