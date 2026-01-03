@@ -31,6 +31,27 @@ BASE_URL = "http://86.104.73.3/" #os.getenv("BASE_URL", "http://localhost")
 OUTPUT_FOLDER = "output_files"
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
+GPT_SCHEMA = {
+    "Название": None,
+    "Цена": None,
+    "Валюта": None,
+    "Площадь": None,
+    "Площадь земли": None,
+    "Тип объекта": None,
+    "Год постройки": None,
+    "Количество комнат": None,
+    "Описание": None,
+    "Инфраструктура": None,
+    "С/у": None,
+    "Этаж": None,
+    "Локация": None,
+    "Координаты": None,
+    "Контактное лицо": None,
+    "Телефон контактного лица": None,
+    "Компания": None,
+    "Телефон компании": None
+}
+
 
 # ============================================================
 # 🧠 DB Config Loader
@@ -126,99 +147,120 @@ def get_rendered_html(url, config):
 # ============================================================
 # 🧩 Property Parser (fixed title spacing)
 # ============================================================
+def gpt_extract_fields(html_content: str, url: str, missing_fields: list):
+    system_prompt = "You are a professional real estate data extractor."
+
+    user_prompt = f"""
+Extract ONLY the following missing fields from the HTML.
+
+Rules:
+- Return RAW JSON
+- No explanations
+- If value not found → null
+- Do NOT invent data
+
+Fields to extract:
+{json.dumps(missing_fields, ensure_ascii=False)}
+
+URL:
+{url}
+
+HTML:
+{html_content[:120000]}
+"""
+
+    headers = {
+        "Authorization": f"Bearer {os.getenv('CHAT_GPT_API_KEY')}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "model": os.getenv("CHAT_GPT_MODEL"),
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "temperature": 0
+    }
+
+    r = requests.post(
+        os.getenv("CHAT_GPT_URL"),
+        headers=headers,
+        json=payload,
+        timeout=120
+    )
+
+    if r.status_code != 200:
+        print("⚠️ GPT error:", r.text)
+        return {}
+
+    try:
+        content = r.json()["choices"][0]["message"]["content"]
+        return json.loads(content)
+    except Exception as e:
+        print("⚠️ GPT JSON error:", e)
+        return {}
+
 def parse_property_with_config(url, config, download_folder="images"):
     result = {"Ссылка на объект": url}
     os.makedirs(download_folder, exist_ok=True)
-    # 🧹 Clean up previous images before starting a new download
-    
-        
-    try:
-        html_content = get_rendered_html(url, config)
-        if not html_content:
-            r = requests.get(url)
-            html_content = r.text if r.status_code == 200 else ""
 
-        tree = html.fromstring(html_content)
-        fields = config.get("fields", {})
+    html_content = get_rendered_html(url, config)
+    if not html_content:
+        return None, "Failed to load HTML"
 
-        for field_name, field_data in fields.items():
-            xpath = field_data.get("xpath")
-            transform = field_data.get("transform")
+    tree = html.fromstring(html_content)
+    fields = config.get("fields", {})
 
-            # --- Handle photo fields separately ---
-            if field_name in ["Фото_ссылки", "Фото_уникальные_названия"] and xpath:
-                urls = tree.xpath(xpath)
-                if not urls:
-                    result[field_name] = "ERROR"
-                    continue
+    missing_for_gpt = []
 
-                downloaded_files = []
-                for u in urls:
-                    u_clean = u.split(",")[0].strip()
-                    filename = f"{uuid.uuid4().hex}_{os.path.basename(u_clean)}"
-                    local_path = os.path.join(download_folder, filename)
+    for field_name, field_data in fields.items():
+        xpath = field_data.get("xpath")
+        transform = field_data.get("transform")
 
-                    if not os.path.exists(local_path):
-                        try:
-                            resp = requests.get(u_clean, timeout=10)
-                            if resp.status_code == 200:
-                                with open(local_path, "wb") as f:
-                                    f.write(resp.content)
-                        except Exception as e:
-                            print(f"⚠️ Failed to download image {u_clean}: {e}")
-                            continue
+        if not xpath:
+            result[field_name] = "ERROR"
+            missing_for_gpt.append(field_name)
+            continue
 
-                    downloaded_files.append((local_path, filename))
+        values = tree.xpath(xpath)
+        if not values:
+            result[field_name] = "ERROR"
+            missing_for_gpt.append(field_name)
+            continue
 
-                if downloaded_files:
-                    result["Фото_ссылки"] = ";".join(
-                        [f"{BASE_URL}/images/{n}" for p, n in downloaded_files]
-                    )
-                    result["Фото_уникальные_названия"] = ";".join(
-                        [n for p, n in downloaded_files]
-                    )
-                else:
-                    result["Фото_ссылки"] = "ERROR"
-                    result["Фото_уникальные_названия"] = "ERROR"
-                continue
+        cleaned = []
+        for v in values:
+            txt = v.text_content().strip() if hasattr(v, "text_content") else str(v).strip()
+            if txt:
+                cleaned.append(txt)
 
-            # --- Skip missing xpath ---
-            if not xpath:
-                result[field_name] = "ERROR"
-                continue
+        combined = "\n".join(dict.fromkeys(cleaned))  # remove duplicates
 
-            # --- Extract values ---
-            values = tree.xpath(xpath)
-            if not values:
-                result[field_name] = "ERROR"
-                continue
+        if transform:
+            try:
+                combined = eval(transform, {"re": re}, {"value": combined})
+            except:
+                combined = combined
 
-            cleaned_values = []
-            for v in values:
-                text_value = v.text_content().strip() if hasattr(v, "text_content") else str(v).strip()
-                cleaned_values.append(text_value)
+        if not combined:
+            result[field_name] = "ERROR"
+            missing_for_gpt.append(field_name)
+        else:
+            result[field_name] = combined
 
-            combined_value = "\n".join(cleaned_values)
+    # 🤖 GPT FALLBACK
+    if missing_for_gpt:
+        print(f"🧠 GPT extracting missing fields: {missing_for_gpt}")
+        gpt_data = gpt_extract_fields(html_content, url, missing_for_gpt)
 
-            # ✅ Normalize multiple spaces in title
-            if field_name == "Название":
-                combined_value = re.sub(r"\s+", " ", combined_value.strip())
+        for k in missing_for_gpt:
+            if k in gpt_data and gpt_data[k]:
+                result[k] = gpt_data[k]
+            elif result.get(k) == "ERROR":
+                result[k] = "ERROR"
 
-            # --- Apply transform if defined ---
-            if transform:
-                try:
-                    safe_globals = {"re": re, "__builtins__": {}}
-                    combined_value = eval(transform, safe_globals, {"value": combined_value})
-                except Exception as e:
-                    combined_value = f"TransformError: {e}"
-
-            result[field_name] = combined_value
-
-        return result, None
-
-    except Exception as e:
-        return None, f"ERROR: {str(e)}"
-
+    return result, None
 
 # ============================================================
 # 💾 Excel Export (fixed column order in Russian)
@@ -365,46 +407,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
-    await update.message.reply_text("✅ Принято, собираю…")
-    print(f"👀 Input URL: {url}")
+    await update.message.reply_text("🔍 Собираю данные…")
 
     domain, config = get_website_config(url)
     if not config:
-        await update.message.reply_text("❌ Источник не подключён. Добавьте в панели.")
+        await update.message.reply_text("❌ Источник не подключён.")
         return
 
-    # Try single property first
     data, error = parse_property_with_config(url, config)
-    download_folder = "images"
-    
-    try:
-        for f in os.listdir(download_folder):
-            file_path = os.path.join(download_folder, f)
-            if os.path.isfile(file_path):
-                os.remove(file_path)
-        print(f"🧹 Old images removed from '{download_folder}'")
-    except Exception as e:
-        print(f"⚠️ Failed to clear images folder: {e}")
-    
+
     if data and data.get("Название") != "ERROR":
         properties = [data]
     else:
         properties = parse_list_page(url, config)
 
     if not properties:
-        await update.message.reply_text("❌ Недвижимость не найдена.")
+        await update.message.reply_text("❌ Ничего не найдено.")
         return
 
     filename = f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_properties.xlsx"
-    file_path = save_to_excel(properties, filename)
-    import pandas as pd
-    df = pd.read_excel(file_path, engine="openpyxl")
-    error_count = df.apply(lambda x: x.astype(str).str.contains("error", case=False, na=False)).sum().sum()
-    await update.message.reply_text(
-        f"✅ Готово: {len(properties)} объекта {error_count} с ошибками. Скачать Excel: \n📂 {BASE_URL}/output_files/{filename}"
-    )
-    send_email_notification("🚀 Bot Notification", f"✅ Готово: {len(properties)} объекта {error_count} с ошибками. Скачать Excel: \n📂 {BASE_URL}/output_files/{filename}")
+    save_to_excel(properties, filename)
 
+    await update.message.reply_text(
+        f"✅ Готово: {len(properties)} объектов\n📂 {BASE_URL}/output_files/{filename}"
+    )
 
 # ============================================================
 # 🚀 Launch Bot
