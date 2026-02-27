@@ -142,6 +142,67 @@ def delete(id):
 def serve_output(filename):
     return send_from_directory("output_files", filename)
 
+# ================= Excel Files Management =================
+@app.route("/excel_files")
+def excel_files():
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+    
+    output_dir = "output_files"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Get all xlsx files with their metadata
+    excel_files_list = []
+    for filename in os.listdir(output_dir):
+        if filename.endswith(('.xlsx', '.xls')):
+            file_path = os.path.join(output_dir, filename)
+            file_size = os.path.getsize(file_path)
+            file_modified = datetime.fromtimestamp(os.path.getmtime(file_path))
+            
+            # Format file size
+            if file_size < 1024:
+                size_str = f"{file_size} B"
+            elif file_size < 1024 * 1024:
+                size_str = f"{file_size / 1024:.2f} KB"
+            else:
+                size_str = f"{file_size / (1024 * 1024):.2f} MB"
+            
+            excel_files_list.append({
+                "filename": filename,
+                "size": size_str,
+                "modified": file_modified.strftime("%Y-%m-%d %H:%M:%S"),
+                "modified_timestamp": file_modified
+            })
+    
+    # Sort by modification time (newest first)
+    excel_files_list.sort(key=lambda x: x["modified_timestamp"], reverse=True)
+    
+    return render_template("excel_files.html", excel_files=excel_files_list)
+
+@app.route("/download_excel/<path:filename>")
+def download_excel(filename):
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+    
+    return send_from_directory("output_files", filename, as_attachment=True)
+
+@app.route("/delete_excel/<path:filename>")
+def delete_excel(filename):
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+    
+    try:
+        file_path = os.path.join("output_files", filename)
+        if os.path.exists(file_path) and filename.endswith(('.xlsx', '.xls')):
+            os.remove(file_path)
+            flash(f"✅ File '{filename}' deleted successfully!", "success")
+        else:
+            flash(f"❌ File '{filename}' not found!", "danger")
+    except Exception as e:
+        flash(f"❌ Error deleting file: {str(e)}", "danger")
+    
+    return redirect(url_for("excel_files"))
+
 # Serve 'images' folder
 @app.route("/images/<path:filename>")
 def serve_images(filename):

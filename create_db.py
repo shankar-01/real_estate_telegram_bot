@@ -14,3 +14,10 @@ CREATE TABLE IF NOT EXISTS configs (
     config_json TEXT
 )
 """)
+website = "jamesedition.com"
+config_json = json.dumps(WEBSITE_CONFIGS["jamesedition.com"])
+cursor.execute("""
+INSERT INTO configs (website, config_json) VALUES (?, ?)
+""", (website, config_json))
+conn.commit()
+conn.close()

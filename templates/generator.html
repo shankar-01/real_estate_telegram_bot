@@ -23,6 +23,9 @@
           <a class="nav-link {% if request.endpoint == 'generator' %}active{% endif %}" href="{{ url_for('generator') }}">Config Generator</a>
         </li>
         <li class="nav-item">
+          <a class="nav-link {% if request.endpoint == 'excel_files' %}active{% endif %}" href="{{ url_for('excel_files') }}">Excel Files</a>
+        </li>
+        <li class="nav-item">
           <a class="nav-link {% if request.endpoint == 'image_pages' %}active{% endif %}" href="{{ url_for('image_pages') }}">Image Pages</a>
         </li>
         <li class="nav-item">
